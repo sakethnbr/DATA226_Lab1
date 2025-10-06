@@ -100,14 +100,6 @@ def predict(cur, forecast_function_name, train_input_table, forecast_table, fina
         )
         ORDER BY DATE DESC;"""
 
-    # Prof's ctas for final table
-    #create_final_table_sql = f"""CREATE OR REPLACE TABLE {final_table} AS
-    #   SELECT SYMBOL, DATE, CLOSE AS actual, NULL AS forecast, NULL AS lower_bound, NULL AS upper_bound
-    #    FROM {train_input_table}
-    #    UNION ALL
-    #    SELECT replace(series, '"', '') as SYMBOL, ts as DATE, NULL AS actual, forecast, lower_bound, upper_bound
-    #    FROM {forecast_table};"""
-
     try:
         cur.execute(make_prediction_sql)
         cur.execute(create_final_table_sql)
@@ -121,7 +113,7 @@ with DAG(
     start_date=datetime(2025, 10, 1),
     catchup=False,
     tags=['ML', 'Forecasting', 'ELT'],
-    schedule=None,  # Run at 3:30 AM (after yfinance ETL completes)
+    schedule="0 9 * * *", 
     default_args={
         'owner': 'calvin/saketh',
         'retries': 1,
