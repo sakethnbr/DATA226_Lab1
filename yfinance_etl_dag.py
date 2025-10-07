@@ -91,13 +91,15 @@ with DAG(
     dag_id="lab1_yfinance_etl",
     description="Stock price pipeline using yfinance API",
     start_date=datetime(2025, 10, 1),
-    schedule_interval=None,      # trigger manually for the lab
+    schedule_interval='0 9 * * *',      # trigger manually for the lab
     catchup=False,
     default_args=default_args,
     tags=["LAB1", "ETL"]
 ) as dag:
     # Changed: Multiple stock symbols
-    symbols = ["AAPL", "TSLA"]
+    stock1 = Variable.get('stock1')
+    stock2 = Variable.get('stock2')
+    symbols = [stock1, stock2]
     
     # Loop through each symbol with unique task IDs
     for symbol in symbols:
