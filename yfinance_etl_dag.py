@@ -19,29 +19,29 @@ def return_snowflake_conn():
     return conn.cursor()
 
 @task
-def return_last_90_days(symbol):
-  df = yf.download(
-      tickers=symbol,
-      period="6mo",
-      interval="1d",
-      group_by="column",
-      auto_adjust=False,
-      progress=False
-  )
-  # Flatten possible MultiIndex columns (e.g., ('Open','AAPL') -> 'Open')
-  if isinstance(df.columns, pd.MultiIndex):
-      df.columns = df.columns.get_level_values(0)
-
-  # Reformatting
-  df.columns.name = None
-  df = df.reset_index()
-  df = df.rename(columns=str.lower)     # normalize column names
-
-  # Add symbol column
-  df["symbol"] = symbol
-  df = df.sort_values("date", ascending=False).head(90)
-  df = df[["symbol", "date", "open", "high", "low", "close", "volume"]]
-  return df
+def return_last_180_days(symbol):
+    df = yf.download(
+        tickers=symbol,
+        period="6mo",
+        interval="1d",
+        group_by="column",
+        auto_adjust=False,
+        progress=False
+    )
+    # Flatten possible MultiIndex columns (e.g., ('Open','AAPL') -> 'Open')
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    
+    # Reformatting
+    df.columns.name = None
+    df = df.reset_index()
+    df = df.rename(columns=str.lower)  # normalize column names
+    
+    # Add symbol column
+    df["symbol"] = symbol
+    df = df.sort_values("date", ascending=False).head(180)  # Changed from 90 to 180
+    df = df[["symbol", "date", "open", "high", "low", "close", "volume"]]
+    return df
 
 @task
 def stock_info_pipeline(symbol: str, records: pd.DataFrame):
@@ -51,7 +51,7 @@ def stock_info_pipeline(symbol: str, records: pd.DataFrame):
     """
     con = return_snowflake_conn()
     table = "RAW.lab1_stock_info"
-
+    
     create_stock_table = f"""
     CREATE TABLE IF NOT EXISTS {table} (
         symbol VARCHAR(10),
@@ -64,11 +64,13 @@ def stock_info_pipeline(symbol: str, records: pd.DataFrame):
         PRIMARY KEY (symbol, date)
     )
     """
-
+    
     try:
         con.execute("BEGIN;")
         con.execute(create_stock_table)
-        con.execute(f"DELETE FROM {table}")
+        # Changed: Delete only data for THIS symbol, not all data
+        con.execute(f"DELETE FROM {table} WHERE symbol = '{symbol}'")
+        
         row_count = 0
         for d, open, high, low, close, volume in records[
             ["date", "open", "high", "low", "close", "volume"]].itertuples(index=False):
@@ -77,22 +79,27 @@ def stock_info_pipeline(symbol: str, records: pd.DataFrame):
                 VALUES ('{symbol}', '{d}', {open}, {high}, {low}, {close}, {volume})
             """)
             row_count += 1
+        
         con.execute("COMMIT;")
-        print(f"Transaction committed. Number of inserted records: {row_count}")
+        print(f"Transaction committed. Number of inserted records for {symbol}: {row_count}")
     except Exception as e:
         con.execute("ROLLBACK;")
-        print(f"Transaction failed. Error: {e}")
+        print(f"Transaction failed for {symbol}. Error: {e}")
         raise
 
 with DAG(
     dag_id="lab1_yfinance_etl",
     description="Stock price pipeline using yfinance API",
     start_date=datetime(2025, 10, 1),
-    schedule_interval=None,          # trigger manually for the lab
+    schedule_interval=None,      # trigger manually for the lab
     catchup=False,
     default_args=default_args,
     tags=["LAB1", "ETL"]
 ) as dag:
-    symbol = Variable.get('stock_symbol')
-    records = return_last_90_days(symbol)
-    stock_info_pipeline(symbol, records)
+    # Changed: Multiple stock symbols
+    symbols = ["AAPL", "TSLA"]
+    
+    # Loop through each symbol with unique task IDs
+    for symbol in symbols:
+        records = return_last_180_days.override(task_id=f"extract_{symbol}")(symbol)
+        stock_info_pipeline.override(task_id=f"load_{symbol}")(symbol, records)
